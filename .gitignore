@@ -1,0 +1,16 @@
+# Arquivo de segredos local (nunca deve ir para o GitHub)
+.env
+
+# Credenciais do Google (arquivo JSON baixado do Google Cloud)
+google-credentials.json
+
+# Arquivos temporários que o Python gera sozinho
+__pycache__/
+*.pyc
+
+# Ambiente virtual do Python, caso você crie um localmente
+venv/
+.venv/
+
+# Arquivos de configuração de editores
+.vscode/

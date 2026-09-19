@@ -1,0 +1,12 @@
+# Biblioteca não-oficial que acessa os dados da NBA (jogos ao vivo e históricos)
+nba_api
+
+# Bibliotecas do Google para ler/escrever no Google Sheets
+gspread
+google-auth
+
+# Usada para fazer chamadas HTTP simples (API do Telegram)
+requests
+
+# Carrega variáveis de ambiente de um arquivo .env quando rodamos localmente
+python-dotenv
