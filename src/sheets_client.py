@@ -19,7 +19,10 @@ from gspread.exceptions import WorksheetNotFound
 
 from src import config
 
-ESCOPOS_GOOGLE = ["https://www.googleapis.com/auth/spreadsheets"]
+ESCOPOS_GOOGLE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 CAMPOS_IDENTIFICACAO_HISTORICO = ["Data", "JogadorID", "Jogador", "Time", "Adversario", "Posicao"]
 
