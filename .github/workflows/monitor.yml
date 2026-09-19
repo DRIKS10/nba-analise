@@ -1,0 +1,36 @@
+name: Monitorar jogos da NBA
+
+# "on.schedule" diz ao GitHub para rodar este workflow sozinho, em horários
+# fixos, sem ninguém precisar clicar em nada. Os horários de cron são sempre
+# em UTC (horário de Brasília = UTC - 3h).
+#
+# Janela desejada: ~12h às 04h30/05h (Brasília) = ~15h às 07h50 (UTC),
+# atravessando a meia-noite UTC — por isso duas linhas de cron.
+on:
+  schedule:
+    - cron: "*/5 15-23 * * *"  # 12h00 às 20h55 (Brasília)
+    - cron: "*/5 0-7 * * *"    # 21h00 às 04h55 (Brasília, já no dia seguinte em UTC)
+  workflow_dispatch: {}         # permite rodar manualmente pela aba "Actions" do GitHub, para testar
+
+jobs:
+  monitorar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar as bibliotecas do projeto
+        run: pip install -r requirements.txt
+
+      - name: Rodar o sistema
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SHEET_NAME: ${{ secrets.GOOGLE_SHEET_NAME }}
+        run: python -m src.main
