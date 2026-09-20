@@ -10,3 +10,8 @@ requests
 
 # Carrega variáveis de ambiente de um arquivo .env quando rodamos localmente
 python-dotenv
+
+# Banco de fusos horários, usado para saber a data "oficial" da NBA
+# (horário dos EUA). Em alguns sistemas (principalmente Windows) o Python não
+# vem com esse banco embutido.
+tzdata
