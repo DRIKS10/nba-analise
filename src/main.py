@@ -31,40 +31,32 @@ def processar_intervalo(planilha, jogo):
     if sheets_client.jogo_ja_processado(planilha, game_id, "intervalo"):
         return
 
-    boxscore = nba_client.obter_boxscore_intervalo(game_id)
+        jogadores_do_jogo = nba_client.obter_boxscore_intervalo(game_id)
     hoje = date.today().isoformat()
-
-    # Para cada time, guardamos também o nome do adversário (o outro time)
-    times = {
-        boxscore["time_casa"]: (boxscore["jogadores_casa"], boxscore["time_visitante"]),
-        boxscore["time_visitante"]: (boxscore["jogadores_visitante"], boxscore["time_casa"]),
-    }
 
     times_para_relatorio = {}
 
-    for nome_time, (jogadores, adversario) in times.items():
-        jogadores_relatorio = []
+    for jogador in jogadores_do_jogo:
+        historico = sheets_client.obter_historico_jogador(planilha, jogador["id"])
+        resultados = stats.avaliar_jogador(jogador, historico)
 
-        for jogador in jogadores:
-            historico = sheets_client.obter_historico_jogador(planilha, jogador["id"])
-            resultados = stats.avaliar_jogador(jogador, historico)
+        projecao = None
+        if projection.projecao_aplicavel(resultados):
+            projecao = projection.calcular_projecao_pontos(jogador, historico)
 
-            projecao = None
-            if projection.projecao_aplicavel(resultados):
-                projecao = projection.calcular_projecao_pontos(jogador, historico)
+        if any(r["desviou"] for r in resultados.values()):
+            _salvar_linha_alerta(
+                planilha, hoje, jogador, jogador["time"], jogador["adversario"], resultados, projecao
+            )
 
-            if any(r["desviou"] for r in resultados.values()):
-                _salvar_linha_alerta(planilha, hoje, jogador, nome_time, adversario, resultados, projecao)
-
-            jogadores_relatorio.append({
-                "nome": jogador["nome"],
-                "resultados": resultados,
-                "projecao": projecao,
-            })
-
-        times_para_relatorio[nome_time] = jogadores_relatorio
+        times_para_relatorio.setdefault(jogador["time"], []).append({
+            "nome": jogador["nome"],
+            "resultados": resultados,
+            "projecao": projecao,
+        })
 
     texto_relatorio = report.montar_relatorio(times_para_relatorio)
+
     if texto_relatorio:
         telegram_client.enviar_mensagem(texto_relatorio)
 
