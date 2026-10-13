@@ -12,17 +12,20 @@ ordem. Cada etapa tem um "porquê" explicado.
 A cada 5 minutos, o GitHub roda o programa sozinho (isso é o que o arquivo
 `.github/workflows/monitor.yml` faz). O programa:
 
-1. Pergunta à NBA quais jogos estão rolando agora.
+1. Pergunta à api-sports.io quais jogos estão rolando agora.
 2. Se algum jogo está **no intervalo**, compara o 1º tempo de cada jogador
-   com o histórico dele e, se achar algo fora do padrão, manda uma mensagem
-   no seu Telegram.
+   com o histórico dele (quando já houver histórico suficiente — ver seção 4
+   da especificação) e, se achar algo fora do padrão, manda uma mensagem no
+   seu Telegram. O 1º tempo de todos os jogadores também é salvo no
+   histórico, mesmo quem não desviou.
 3. Se algum jogo **acabou**, guarda os dados completos numa planilha do
    Google Sheets — é esse histórico que alimenta as comparações dos
    próximos jogos.
 
-Você precisa configurar três coisas antes do sistema funcionar: um bot do
-Telegram, uma planilha do Google, e os "Secrets" do GitHub (senhas guardadas
-com segurança, para o código nunca precisar expor nada).
+Você precisa configurar quatro coisas antes do sistema funcionar: um bot do
+Telegram, uma planilha do Google, uma conta na api-sports.io (fonte dos
+dados da NBA), e os "Secrets" do GitHub (senhas guardadas com segurança,
+para o código nunca precisar expor nada).
 
 ---
 
@@ -70,9 +73,22 @@ sem interface, só para programas acessarem planilhas).
 
 O sistema cria sozinho as três abas que precisa (`Historico`, `Alertas` e
 `Controle`) na primeira vez que rodar — não precisa criar nada manualmente
-dentro da planilha.
+dentro da planilha. Se essas abas já existiam de uma versão anterior do
+sistema (com colunas diferentes), apague-as antes de rodar de novo, para o
+sistema recriar do zero com as colunas certas.
 
-## 3. Colocar o projeto num repositório GitHub público
+## 3. Criar a conta na api-sports.io (fonte dos dados da NBA)
+
+1. Crie uma conta em [api-sports.io](https://api-sports.io/) e assine o
+   plano **Pro** (US$ 15/mês na época em que este sistema foi construído —
+   confira o preço atual no painel, na aba de planos/assinatura).
+2. No painel (dashboard), copie sua **chave de API** — será o valor da
+   variável `APISPORTS_KEY`.
+
+O plano gratuito não é suficiente para o cron rodar sozinho (o limite diário
+de pedidos é baixo demais), mas serve para testes manuais pontuais.
+
+## 4. Colocar o projeto num repositório GitHub público
 
 O repositório precisa ser **público** para o GitHub Actions rodar de graça
 sem limite de minutos. Nenhuma senha vai ficar exposta por causa disso — os
@@ -82,7 +98,7 @@ no código.
 Se ainda não tem o projeto num repositório: crie um repositório novo no
 GitHub (público), e suba os arquivos desta pasta para ele.
 
-## 4. Configurar os Secrets no GitHub
+## 5. Configurar os Secrets no GitHub
 
 No repositório, vá em **Settings > Secrets and variables > Actions > New
 repository secret** e crie, um de cada vez:
@@ -93,8 +109,9 @@ repository secret** e crie, um de cada vez:
 | `TELEGRAM_CHAT_ID` | o número do passo 1.5 |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | o conteúdo inteiro do JSON do passo 2.5 |
 | `GOOGLE_SHEET_NAME` | o nome da planilha do passo 2.7 |
+| `APISPORTS_KEY` | a chave do passo 3.2 |
 
-## 5. Testar
+## 6. Testar
 
 - **Teste manual pelo GitHub**: vá na aba **Actions** do repositório,
   clique no workflow "Monitorar jogos da NBA" e depois em **Run workflow**.
@@ -113,16 +130,22 @@ horário definida em `.github/workflows/monitor.yml`.
 
 ## Limitações conhecidas desta primeira versão
 
-- **A `nba_api` não é oficial**: ela imita o que o app/site da NBA usa
-  internamente, e pode mudar sem aviso. Se o sistema parar de funcionar do
-  nada, o primeiro lugar a investigar é `src/nba_client.py`.
-- **Comparações só ficam confiáveis com histórico suficiente**: nos
-  primeiros jogos da temporada (ou de um jogador específico, ex: alguém que
-  voltou de lesão), há poucos jogos para calcular média/desvio-padrão, então
-  o sistema tende a não gerar alertas até acumular histórico.
-- **Posição do jogador**: a NBA às vezes não informa a posição de jogadores
-  do banco com detalhe (fica genérico, tipo "G" ou "F"). Isso é uma
-  limitação dos dados da própria NBA, não do sistema.
+- **A api-sports.io é uma API de terceiros**: ela pode mudar o formato das
+  respostas sem aviso. Se o sistema parar de funcionar do nada, o primeiro
+  lugar a investigar é `src/nba_client.py`.
+- **O histórico de 1º tempo começa do zero**: a api-sports não permite
+  consultar o 1º tempo de um jogo já encerrado, só o "acumulado até agora"
+  de um jogo em andamento. Por isso o histórico de 1º tempo só existe a
+  partir do momento em que o sistema está rodando de verdade — não dá para
+  importar jogos anteriores a essa data (ver seção 4 da especificação).
+- **Alertas só começam depois de 7 jogos por jogador**: antes disso, o
+  sistema só acumula histórico em silêncio (ver `config.AMOSTRA_MINIMA_JOGOS`).
+- **Posição do jogador**: vem genérica (tipo "G", "F" ou "C"), sem o detalhe
+  de base/ala-armador etc. Isso é uma limitação dos dados da própria fonte,
+  não do sistema.
+- **Jogos de exibição não entram**: eventos como o "NBA Canada Game" não
+  aparecem na api-sports (testado e confirmado). Como não são jogos oficiais
+  de temporada, isso não afeta o histórico.
 - **GitHub desativa cron de repositórios inativos**: se o repositório ficar
   60 dias sem nenhum commit, o GitHub pausa os agendamentos automáticos.
   Um commit qualquer (mesmo pequeno) reativa.
