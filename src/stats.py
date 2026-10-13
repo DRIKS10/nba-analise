@@ -4,7 +4,7 @@ de cada jogador, comparando o desempenho de hoje com o histórico dos últimos
 jogos (ver seções 4 e 5 da especificação).
 
 Este arquivo é "matemática pura": não sabe nada sobre Telegram, planilha ou
-nba_api. Ele só recebe números (dicionários simples) e devolve resultados.
+a fonte de dados da NBA. Ele só recebe números (dicionários simples) e devolve resultados.
 Isso facilita testar se a conta está certa isoladamente do resto do sistema.
 """
 
@@ -167,3 +167,12 @@ def avaliar_jogador(hoje, historico):
         chave: avaliar_metrica(metrica_cfg, hoje, historico)
         for chave, metrica_cfg in config.METRICAS.items()
     }
+
+
+def amostra_suficiente(historico):
+    """Diz se um jogador já tem histórico suficiente para entrar na análise
+    de desvios (ver seção 4 da especificação: mínimo de
+    config.AMOSTRA_MINIMA_JOGOS jogos registrados). Antes disso, o sistema
+    só deve acumular dados no histórico, sem avaliar nem alertar.
+    """
+    return len(historico) >= config.AMOSTRA_MINIMA_JOGOS
