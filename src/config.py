@@ -10,8 +10,17 @@ não é preciso tocar na lógica de cálculo em outros arquivos.
 # Quantos jogos recentes usamos para calcular a média e o desvio-padrão (baseline)
 HISTORICO_JOGOS = 7
 
+# Quantos jogos um jogador precisa ter registrados no histórico antes do
+# sistema começar a avaliar desvios para ele (ver seção 4 da especificação).
+# Evita alertas baseados em pouquíssima amostra logo no início da temporada.
+AMOSTRA_MINIMA_JOGOS = 7
+
 # Z-score mínimo para um desvio ser considerado relevante
 LIMIAR_ZSCORE = 1.5
+
+# Endereço base da api-sports.io (fonte de dados da NBA — ver nota de revisão
+# no topo do spec-sistema-nba.md sobre a migração a partir da nba_api)
+APISPORTS_BASE_URL = "https://v2.nba.api-sports.io"
 
 # Minutos mínimos jogados no 1º tempo para confiarmos em métricas "por minuto"
 # (FGA, 3PA, FTA). Abaixo disso, a amostra é considerada pequena demais.
