@@ -1,185 +1,176 @@
 """
-Única parte do sistema que "conversa" com a nba_api (biblioteca não-oficial
-que acessa dados da NBA). Isola essa complexidade do resto do código: as
-outras partes do sistema só recebem dicionários Python já prontos.
+Única parte do sistema que "conversa" com a fonte de dados da NBA. Isola essa
+complexidade do resto do código: as outras partes do sistema só recebem
+dicionários Python já prontos.
 
-AVISO IMPORTANTE (histórico de uma correção real feita neste projeto): a
-versão original deste arquivo usava o endpoint "ao vivo" da NBA
-(nba_api.live, que fala com cdn.nba.com). Ao testar rodando no GitHub
-Actions, esse endpoint devolveu "Access Denied" (bloqueio a pedidos vindos
-de servidores/nuvem — algo comum em provedores de CI/CD). A solução foi usar
-só os endpoints de `nba_api.stats` (stats.nba.com), que não têm esse
-bloqueio: o mesmo endpoint de box score usado para jogos históricos também
-funciona para um jogo AINDA EM ANDAMENTO — basta pedir só os períodos 1 e 2
-(1º tempo), mesmo que o jogo ainda não tenha terminado.
+HISTÓRICO DESTA FONTE DE DADOS (nota de revisão): a primeira versão deste
+arquivo usava a biblioteca `nba_api`. Funcionava em testes locais, mas a NBA
+bloqueia esse endpoint quando o pedido vem de servidores/nuvem — confirmado
+rodando de verdade no GitHub Actions, e um problema conhecido de outros
+usuários da biblioteca. A solução foi migrar para a `api-sports.io`, uma API
+paga de terceiros feita para esse tipo de uso. Ver spec-sistema-nba.md para
+o histórico completo da decisão.
 
-Como é uma API não-oficial, ela pode mudar de comportamento no futuro sem
-aviso. Se um dia os números vierem estranhos (ou o bloqueio voltar de outra
-forma), este arquivo é o primeiro lugar a conferir.
+Particularidade importante desta API: ela não permite consultar o 1º tempo
+de um jogo já encerrado — só devolve o "acumulado até agora". Por isso o
+1º tempo de cada jogo só existe se for capturado DURANTE o próprio intervalo,
+em tempo real (ver main.py). A mesma função de busca de estatísticas
+(`_estatisticas_dos_jogadores`) é usada tanto no intervalo quanto no fim do
+jogo — muda só o momento em que é chamada, e a etiqueta (1T ou JOGO) que o
+chamador escolhe para os dados.
 """
 
+import os
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from nba_api.stats.endpoints import boxscoretraditionalv3, scoreboardv3
+import requests
+
+from src import config
+
+
+class ErroApiSports(Exception):
+    pass
+
+
+def _chamar_api(caminho, params=None):
+    headers = {"x-apisports-key": os.environ["APISPORTS_KEY"]}
+    resposta = requests.get(
+        f"{config.APISPORTS_BASE_URL}/{caminho}",
+        headers=headers,
+        params=params or {},
+        timeout=30,
+    )
+    resposta.raise_for_status()
+    dados = resposta.json()
+    if dados.get("errors"):
+        raise ErroApiSports(f"api-sports devolveu erro em {caminho}: {dados['errors']}")
+    return dados
 
 
 # ---------------------------------------------------------------------------
 # Jogos do dia (status atual: agendado / ao vivo / intervalo / final)
 # ---------------------------------------------------------------------------
 
-def _data_nba(offset_dias=0):
-    """A NBA organiza os jogos por data do horário dos EUA (não Brasília).
-    `offset_dias=1` devolve o dia anterior."""
-    hoje_et = datetime.now(ZoneInfo("America/New_York")).date()
-    return (hoje_et - timedelta(days=offset_dias)).isoformat()
+def _data_utc(offset_dias=0):
+    """A api-sports organiza os jogos por data em UTC (não existe parâmetro
+    de fuso horário nessa API — já testamos e confirmamos isso)."""
+    hoje = datetime.utcnow().date()
+    return (hoje + timedelta(days=offset_dias)).isoformat()
 
 
 def listar_jogos_do_dia():
-    """Devolve os jogos de HOJE e de ONTEM (horário dos EUA) — dois dias,
-    não um só — porque um jogo da costa oeste que começa à noite nos EUA
-    pode continuar "ao vivo" ou terminar já depois da meia-noite no horário
-    de Brasília, quando por aqui já viramos o dia.
+    """Devolve os jogos de HOJE e de AMANHÃ em UTC — dois dias, não um só —
+    porque um jogo da costa oeste dos EUA que começa à noite pode cair, em
+    UTC, no dia seguinte ao do resto dos jogos da rodada.
 
-    Cada jogo é um dicionário simples com pelo menos: gameId, gameStatus
-    (1=agendado, 2=ao vivo, 3=final) e gameStatusText (ex: "Halftime", "Final").
+    Cada jogo devolvido é o objeto original da api-sports (um dicionário com
+    "id", "status" {"long", "short", "halftime"}, "teams" {"home", "visitors"}
+    etc.) — não precisamos reformatar nada aqui, o resto do código usa os
+    campos diretamente.
     """
     jogos_por_id = {}
     for offset in (0, 1):
-        cabecalho = scoreboardv3.ScoreboardV3(
-            game_date=_data_nba(offset), league_id="00"
-        ).game_header.get_dict()
-        for linha in cabecalho["data"]:
-            jogo = dict(zip(cabecalho["headers"], linha))
-            jogos_por_id[jogo["gameId"]] = jogo  # evita duplicar se aparecer nos dois dias
+        dados = _chamar_api("games", {"date": _data_utc(offset)})
+        for jogo in dados["response"]:
+            jogos_por_id[jogo["id"]] = jogo
     return list(jogos_por_id.values())
 
 
 def jogo_esta_no_intervalo(jogo):
     """True se o jogo está exatamente no intervalo (fim do 2º período)."""
-    return jogo["gameStatusText"].strip().lower() == "halftime"
+    return bool(jogo["status"]["halftime"])
 
 
 def jogo_terminou(jogo):
-    """True se o jogo já terminou (status 'Final')."""
-    return jogo["gameStatus"] == 3
+    """True se o jogo já terminou. status.short == 3 é o código de 'Finished'
+    (confirmado testando um jogo real até o fim)."""
+    return jogo["status"]["short"] == 3
 
 
 # ---------------------------------------------------------------------------
-# Conversão do formato de minutos usado pelos box scores (stats.nba.com)
+# Conversão de campos que a api-sports devolve como texto
 # ---------------------------------------------------------------------------
 
-def _minutos_para_decimal(valor_str):
-    """Converte "34:12" em minutos decimais, ex: 34.2."""
-    if not valor_str or ":" not in valor_str:
+def _para_numero(valor):
+    """A api-sports devolve minutos e porcentagens como texto (ex: "15",
+    "33.3"). Essa função converte para número, tratando valores vazios/nulos
+    (jogador que não entrou em quadra) como zero.
+    """
+    if valor in (None, ""):
         return 0.0
-    minutos, segundos = valor_str.split(":")
-    return int(minutos) + int(segundos) / 60
+    return float(valor)
 
 
 # ---------------------------------------------------------------------------
-# Box score por período (usado tanto no intervalo quanto no jogo encerrado)
+# Estatísticas dos jogadores de um jogo
 # ---------------------------------------------------------------------------
-
-def _stats_por_periodo(game_id, start_period, end_period, range_type):
-    dados = boxscoretraditionalv3.BoxScoreTraditionalV3(
-        game_id=game_id,
-        start_period=start_period,
-        end_period=end_period,
-        start_range=0,
-        end_range=0,
-        range_type=range_type,
-    ).player_stats.get_dict()
-    return [dict(zip(dados["headers"], linha)) for linha in dados["data"]]
-
 
 def _mapear_estatisticas(linha, sufixo):
     return {
-        f"MIN_{sufixo}": _minutos_para_decimal(linha["minutes"]),
-        f"PTS_{sufixo}": linha["points"],
-        f"FGA_{sufixo}": linha["fieldGoalsAttempted"],
-        f"FG_PCT_{sufixo}": linha["fieldGoalsPercentage"] * 100,
-        f"PA3_{sufixo}": linha["threePointersAttempted"],
-        f"PM3_{sufixo}": linha["threePointersMade"],
-        f"P3_PCT_{sufixo}": linha["threePointersPercentage"] * 100,
-        f"FTA_{sufixo}": linha["freeThrowsAttempted"],
-        f"REB_{sufixo}": linha["reboundsTotal"],
-        f"AST_{sufixo}": linha["assists"],
-        f"PF_{sufixo}": linha["foulsPersonal"],
+        f"MIN_{sufixo}": _para_numero(linha.get("min")),
+        f"PTS_{sufixo}": linha.get("points") or 0,
+        f"FGA_{sufixo}": linha.get("fga") or 0,
+        f"FG_PCT_{sufixo}": _para_numero(linha.get("fgp")),
+        f"PA3_{sufixo}": linha.get("tpa") or 0,
+        f"PM3_{sufixo}": linha.get("tpm") or 0,
+        f"P3_PCT_{sufixo}": _para_numero(linha.get("tpp")),
+        f"FTA_{sufixo}": linha.get("fta") or 0,
+        f"REB_{sufixo}": linha.get("totReb") or 0,
+        f"AST_{sufixo}": linha.get("assists") or 0,
+        f"PF_{sufixo}": linha.get("pFouls") or 0,
     }
 
 
-def _nomes_dos_times(linhas):
-    """Mapa {teamId: "Cidade Nome"} a partir de qualquer lista de linhas de
-    box score (elas já trazem teamCity/teamName repetidos em cada linha)."""
-    return {linha["teamId"]: f"{linha['teamCity']} {linha['teamName']}" for linha in linhas}
+def _estatisticas_dos_jogadores(game_id, jogo, sufixo):
+    """Busca as estatísticas acumuladas de todos os jogadores de um jogo,
+    no momento em que a função é chamada, e devolve uma lista de
+    dicionários prontos para salvar na planilha ou avaliar desvios.
 
-
-def obter_boxscore_intervalo(game_id):
-    """Busca o placar parcial (1º tempo) de um jogo que está no intervalo,
-    pedindo só os períodos 1 e 2 do box score — o jogo ainda não terminou,
-    então não existe "jogo completo" ainda (ver seção 3.1 da especificação).
-
-    Devolve uma lista de dicionários, um por jogador, cada um com:
-        id, nome, time, adversario, posicao, + as colunas "_1T"
+    `jogo` é o objeto devolvido por listar_jogos_do_dia() para esse jogo —
+    usamos os nomes dos dois times de lá para calcular o "adversário" de
+    cada jogador (o endpoint de estatísticas só informa o time do próprio
+    jogador, não o adversário).
+    `sufixo` é "1T" (chamado durante o intervalo) ou "JOGO" (chamado depois
+    que o jogo termina) — define o nome das colunas de estatística.
     """
-    linhas = _stats_por_periodo(game_id, start_period=1, end_period=2, range_type=1)
-    nomes_time_por_id = _nomes_dos_times(linhas)
-    ids_dos_times = list(nomes_time_por_id.keys())
+    dados = _chamar_api("players/statistics", {"game": game_id})
+
+    id_casa = jogo["teams"]["home"]["id"]
+    nome_casa = jogo["teams"]["home"]["name"]
+    nome_visitante = jogo["teams"]["visitors"]["name"]
 
     jogadores = []
-    for linha in linhas:
-        time_id = linha["teamId"]
-        outro_time_id = next((t for t in ids_dos_times if t != time_id), None)
+    for linha in dados["response"]:
+        time_do_jogador = linha["team"]["id"]
+        if time_do_jogador == id_casa:
+            nome_time, nome_adversario = nome_casa, nome_visitante
+        else:
+            nome_time, nome_adversario = nome_visitante, nome_casa
+
         jogador = {
-            "id": linha["personId"],
-            "nome": f"{linha['firstName']} {linha['familyName']}",
-            "time": nomes_time_por_id.get(time_id, "N/D"),
-            "adversario": nomes_time_por_id.get(outro_time_id, "N/D"),
-            "posicao": linha.get("position") or "N/D",
+            "id": linha["player"]["id"],
+            "nome": f"{linha['player']['firstname']} {linha['player']['lastname']}",
+            "time": nome_time,
+            "adversario": nome_adversario,
+            "posicao": linha.get("pos") or "N/D",
         }
-        jogador.update(_mapear_estatisticas(linha, "1T"))
+        jogador.update(_mapear_estatisticas(linha, sufixo))
         jogadores.append(jogador)
 
     return jogadores
 
 
-def obter_boxscore_final_por_jogador(game_id):
-    """Busca o box score de um jogo já encerrado, separado em 1º tempo e
-    jogo completo, para TODOS os jogadores que jogaram (ver seção 3.2).
-
-    Devolve uma lista de dicionários, um por jogador, cada um com:
-        id, nome, time, adversario, posicao,
-        + as colunas "_1T" e "_JOGO" de cada métrica (PTS_1T, PTS_JOGO, ...)
+def obter_boxscore_intervalo(game_id, jogo):
+    """Estatísticas acumuladas no intervalo = 1º tempo (ver seção 3.1).
+    Devolve uma lista de jogadores com id/nome/time/adversario/posicao
+    + colunas "_1T".
     """
-    # range_type=1 (por período), períodos 1 e 2 juntos = 1º tempo
-    primeiro_tempo = _stats_por_periodo(game_id, start_period=1, end_period=2, range_type=1)
-    # range_type=0 devolve sempre o jogo completo (inclui prorrogação)
-    jogo_completo = _stats_por_periodo(game_id, start_period=0, end_period=0, range_type=0)
+    return _estatisticas_dos_jogadores(game_id, jogo, "1T")
 
-    jogo_completo_por_id = {linha["personId"]: linha for linha in jogo_completo}
-    nomes_time_por_id = _nomes_dos_times(jogo_completo)
-    ids_dos_times = list(nomes_time_por_id.keys())
 
-    jogadores = []
-    for linha_1t in primeiro_tempo:
-        pid = linha_1t["personId"]
-        linha_jogo = jogo_completo_por_id.get(pid)
-        if linha_jogo is None:
-            continue  # não deveria acontecer, mas evita quebrar o sistema
-
-        time_id = linha_1t["teamId"]
-        outro_time_id = next((t for t in ids_dos_times if t != time_id), None)
-
-        jogador = {
-            "id": pid,
-            "nome": f"{linha_1t['firstName']} {linha_1t['familyName']}",
-            "time": nomes_time_por_id.get(time_id, "N/D"),
-            "adversario": nomes_time_por_id.get(outro_time_id, "N/D"),
-            "posicao": linha_1t.get("position") or "N/D",
-        }
-        jogador.update(_mapear_estatisticas(linha_1t, "1T"))
-        jogador.update(_mapear_estatisticas(linha_jogo, "JOGO"))
-        jogadores.append(jogador)
-
-    return jogadores
+def obter_boxscore_final(game_id, jogo):
+    """Estatísticas acumuladas depois do jogo terminar = jogo completo
+    (ver seção 3.2). Devolve uma lista de jogadores com
+    id/nome/time/adversario/posicao + colunas "_JOGO".
+    """
+    return _estatisticas_dos_jogadores(game_id, jogo, "JOGO")
