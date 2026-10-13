@@ -1,17 +1,9 @@
-# Biblioteca não-oficial que acessa os dados da NBA (jogos ao vivo e históricos)
-nba_api
+# Usada para fazer chamadas HTTP simples (API da api-sports.io e do Telegram)
+requests
 
 # Bibliotecas do Google para ler/escrever no Google Sheets
 gspread
 google-auth
 
-# Usada para fazer chamadas HTTP simples (API do Telegram)
-requests
-
 # Carrega variáveis de ambiente de um arquivo .env quando rodamos localmente
 python-dotenv
-
-# Banco de fusos horários, usado para saber a data "oficial" da NBA
-# (horário dos EUA). Em alguns sistemas (principalmente Windows) o Python não
-# vem com esse banco embutido.
-tzdata
