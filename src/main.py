@@ -15,6 +15,10 @@ com cada um, seguindo a seção 3 da especificação:
 Cada jogo só é processado uma vez em cada etapa (ver aba "Controle" em
 sheets_client.py), para não repetir notificações quando o cron roda de novo
 e encontra o mesmo jogo ainda no intervalo ou ainda "Final".
+
+Cada aba da planilha é lida apenas UMA VEZ por execução (ver nota de revisão
+em sheets_client.py) — por isso as funções de leitura recebem um "cache"
+em vez de ler a planilha direto a cada jogador.
 """
 
 from datetime import date
@@ -29,20 +33,21 @@ from src import config, nba_client, projection, report, sheets_client, stats, te
 load_dotenv()
 
 
-def processar_intervalo(planilha, jogo):
+def processar_intervalo(planilha, cache_controle, jogo):
     game_id = jogo["id"]
-    if sheets_client.jogo_ja_processado(planilha, game_id, "intervalo"):
+    if sheets_client.jogo_ja_processado(cache_controle, game_id, "intervalo"):
         return
 
     jogadores_do_jogo = nba_client.obter_boxscore_intervalo(game_id, jogo)
     hoje = date.today().isoformat()
+    cache_historico = sheets_client.carregar_cache_historico(planilha)
 
     times_para_relatorio = {}
 
     for jogador in jogadores_do_jogo:
         # Histórico ANTES de registrar o jogo de hoje, para não comparar o
         # jogador com ele mesmo
-        historico = sheets_client.obter_historico_jogador(planilha, jogador["id"])
+        historico = sheets_client.obter_historico_jogador(cache_historico, jogador["id"])
 
         if stats.amostra_suficiente(historico):
             resultados = stats.avaliar_jogador(jogador, historico)
@@ -63,13 +68,13 @@ def processar_intervalo(planilha, jogo):
         # nem no relatório — mas o 1º tempo dele é gravado de qualquer forma
         # (linha abaixo), para a amostra ir crescendo.
 
-        sheets_client.registrar_etapa_historico(planilha, game_id, hoje, jogador, "1T")
+        sheets_client.registrar_etapa_historico(cache_historico, game_id, hoje, jogador, "1T")
 
     texto_relatorio = report.montar_relatorio(times_para_relatorio)
     if texto_relatorio:
         telegram_client.enviar_mensagem(texto_relatorio)
 
-    sheets_client.marcar_jogo_processado(planilha, game_id, "intervalo")
+    sheets_client.marcar_jogo_processado(cache_controle, game_id, "intervalo")
 
 
 def _salvar_linha_alerta(planilha, game_id, data, jogador, resultados, projecao):
@@ -103,19 +108,21 @@ def _salvar_linha_alerta(planilha, game_id, data, jogador, resultados, projecao)
     sheets_client.registrar_alerta(planilha, linha)
 
 
-def processar_final(planilha, jogo):
+def processar_final(planilha, cache_controle, jogo):
     game_id = jogo["id"]
-    if sheets_client.jogo_ja_processado(planilha, game_id, "final"):
+    if sheets_client.jogo_ja_processado(cache_controle, game_id, "final"):
         return
 
     hoje = date.today().isoformat()
     jogadores = nba_client.obter_boxscore_final(game_id, jogo)
+    cache_historico = sheets_client.carregar_cache_historico(planilha)
+    cache_alertas = sheets_client.carregar_cache_alertas(planilha)
 
     for jogador in jogadores:
         # Seção 3.2: SEMPRE grava no histórico, mesmo quem não desviou —
         # cria a linha se o intervalo não tiver sido capturado (ver nota de
         # revisão em sheets_client.py)
-        sheets_client.registrar_etapa_historico(planilha, game_id, hoje, jogador, "JOGO")
+        sheets_client.registrar_etapa_historico(cache_historico, game_id, hoje, jogador, "JOGO")
 
         # Se esse jogador tinha um alerta criado no intervalo, atualiza com
         # os valores reais do jogo completo (para comparar com a projeção)
@@ -124,21 +131,22 @@ def processar_final(planilha, jogo):
             for chave in config.ORDEM_COLUNAS_ALERTA
         }
         sheets_client.atualizar_alerta_com_resultado_final(
-            planilha, game_id, jogador["id"], valores_jogo_completo
+            cache_alertas, game_id, jogador["id"], valores_jogo_completo
         )
 
-    sheets_client.marcar_jogo_processado(planilha, game_id, "final")
+    sheets_client.marcar_jogo_processado(cache_controle, game_id, "final")
 
 
 def main():
     planilha = sheets_client.conectar()
     jogos_de_hoje = nba_client.listar_jogos_do_dia()
+    cache_controle = sheets_client.carregar_cache_controle(planilha)
 
     for jogo in jogos_de_hoje:
         if nba_client.jogo_esta_no_intervalo(jogo):
-            processar_intervalo(planilha, jogo)
+            processar_intervalo(planilha, cache_controle, jogo)
         elif nba_client.jogo_terminou(jogo):
-            processar_final(planilha, jogo)
+            processar_final(planilha, cache_controle, jogo)
 
 
 if __name__ == "__main__":
