@@ -18,6 +18,14 @@ completada no fim do jogo (com os dados de jogo completo) — ou criada
 diretamente no fim, se o intervalo não tiver sido capturado por algum motivo.
 Para localizar a linha certa nesse segundo momento, tanto a aba "Historico"
 quanto a aba "Alertas" têm uma coluna "GameID".
+
+NOTA DE REVISÃO sobre "cache": no primeiro teste real do sistema, ele estourou
+a cota de leitura da API do Google Sheets, porque lia a planilha inteira de
+novo para CADA jogador (até 20+ leituras repetidas por jogo). A solução foi
+ler cada aba só UMA VEZ por execução, guardar o resultado em memória (o que
+chamamos aqui de "cache"), e todas as funções trabalharem em cima desse
+retrato da planilha. Isso explica por que várias funções recebem um "cache"
+em vez de receberem a planilha diretamente.
 """
 
 import json
@@ -46,7 +54,7 @@ def _campos_estatisticas(sufixo):
 
     Agrupar por etapa (em vez de alternar 1T/JOGO métrica a métrica) deixa as
     colunas de cada etapa lado a lado na planilha, o que permite atualizar
-    todas de uma vez só (ver _atualizar_intervalo_de_celulas).
+    todas de uma vez só (ver registrar_etapa_historico).
     """
     return [f"{chave}_{sufixo}" for chave in config.METRICAS]
 
@@ -99,19 +107,43 @@ def _garantir_aba(planilha, nome_aba, cabecalho):
         aba.append_row(cabecalho)
 
 
+def _carregar_cache(planilha, nome_aba):
+    """Lê uma aba inteira UMA VEZ e guarda em memória, para o resto da
+    execução não precisar ler a planilha de novo para cada jogador."""
+    aba = planilha.worksheet(nome_aba)
+    return {"aba": aba, "linhas": aba.get_all_values()}
+
+
+def carregar_cache_historico(planilha):
+    return _carregar_cache(planilha, config.ABA_HISTORICO)
+
+
+def carregar_cache_alertas(planilha):
+    return _carregar_cache(planilha, config.ABA_ALERTAS)
+
+
+def carregar_cache_controle(planilha):
+    return _carregar_cache(planilha, config.ABA_CONTROLE)
+
+
 # ---------------------------------------------------------------------------
 # Aba "Historico"
 # ---------------------------------------------------------------------------
 
-def obter_historico_jogador(planilha, jogador_id):
+def obter_historico_jogador(cache_historico, jogador_id):
     """Devolve os últimos config.HISTORICO_JOGOS jogos de um jogador, como
     lista de dicionários de estatísticas, prontos para o stats.py usar.
     """
-    aba = planilha.worksheet(config.ABA_HISTORICO)
-    registros = aba.get_all_records()
-    jogos_jogador = [r for r in registros if str(r.get("JogadorID")) == str(jogador_id)]
-    jogos_jogador.sort(key=lambda r: r["Data"], reverse=True)
-    ultimos = jogos_jogador[: config.HISTORICO_JOGOS]
+    cabecalho = cache_historico["linhas"][0]
+    idx_jogador_id = cabecalho.index("JogadorID")
+
+    registros = [
+        dict(zip(cabecalho, linha))
+        for linha in cache_historico["linhas"][1:]
+        if linha[idx_jogador_id] == str(jogador_id)
+    ]
+    registros.sort(key=lambda r: r["Data"], reverse=True)
+    ultimos = registros[: config.HISTORICO_JOGOS]
     return [_registro_para_estatisticas(r) for r in ultimos]
 
 
@@ -123,21 +155,20 @@ def _registro_para_estatisticas(registro):
     return dados
 
 
-def _encontrar_linha_historico(aba, game_id, jogador_id):
+def _encontrar_linha_historico(cache_historico, game_id, jogador_id):
     """Devolve o número da linha (base 1, contando o cabeçalho) de um
     jogador/jogo na aba Historico, ou None se ainda não existir.
     """
-    valores = aba.get_all_values()
-    cabecalho = valores[0]
+    cabecalho = cache_historico["linhas"][0]
     idx_game_id = cabecalho.index("GameID")
     idx_jogador_id = cabecalho.index("JogadorID")
-    for indice, linha in enumerate(valores[1:], start=2):
+    for indice, linha in enumerate(cache_historico["linhas"][1:], start=2):
         if linha[idx_game_id] == str(game_id) and linha[idx_jogador_id] == str(jogador_id):
             return indice
     return None
 
 
-def registrar_etapa_historico(planilha, game_id, data, jogador, etapa):
+def registrar_etapa_historico(cache_historico, game_id, data, jogador, etapa):
     """Registra os dados de UMA etapa ("1T" ou "JOGO") de um jogador/jogo na
     aba Historico — cria a linha se ela não existir, ou atualiza só as
     colunas dessa etapa se ela já existir (ver nota de revisão no topo do
@@ -147,11 +178,11 @@ def registrar_etapa_historico(planilha, game_id, data, jogador, etapa):
     colunas de estatística daquela etapa (ex: devolvido por
     nba_client.obter_boxscore_intervalo ou obter_boxscore_final).
     """
-    aba = planilha.worksheet(config.ABA_HISTORICO)
+    aba = cache_historico["aba"]
     campos_etapa = CAMPOS_ESTATISTICAS_1T if etapa == "1T" else CAMPOS_ESTATISTICAS_JOGO
     valores_etapa = [jogador.get(campo, "") for campo in campos_etapa]
 
-    linha_existente = _encontrar_linha_historico(aba, game_id, jogador["id"])
+    linha_existente = _encontrar_linha_historico(cache_historico, game_id, jogador["id"])
 
     if linha_existente is None:
         identificacao = {
@@ -172,11 +203,15 @@ def registrar_etapa_historico(planilha, game_id, data, jogador, etapa):
             else:
                 linha_completa.append("")  # colunas da OUTRA etapa, ainda não capturada
         aba.append_row(linha_completa)
+        cache_historico["linhas"].append([str(v) for v in linha_completa])
     else:
         idx_inicio = CABECALHO_HISTORICO.index(campos_etapa[0]) + 1
         idx_fim = CABECALHO_HISTORICO.index(campos_etapa[-1]) + 1
         intervalo = f"{rowcol_to_a1(linha_existente, idx_inicio)}:{rowcol_to_a1(linha_existente, idx_fim)}"
         aba.update(intervalo, [valores_etapa])
+        for i, campo in enumerate(campos_etapa):
+            idx_coluna = CABECALHO_HISTORICO.index(campo)
+            cache_historico["linhas"][linha_existente - 1][idx_coluna] = str(valores_etapa[i])
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +223,10 @@ def registrar_alerta(planilha, dados_linha):
 
     `dados_linha` é um dicionário cujas chaves são os nomes de coluna
     devolvidos por cabecalho_alertas(). Colunas ausentes ficam em branco.
+
+    Diferente das funções da aba Historico, esta não precisa de cache: ela
+    só CRIA linhas (nunca procura uma existente), então não tem o mesmo
+    problema de leituras repetidas.
     """
     aba = planilha.worksheet(config.ABA_ALERTAS)
     cabecalho = cabecalho_alertas()
@@ -195,7 +234,7 @@ def registrar_alerta(planilha, dados_linha):
     aba.append_row(linha)
 
 
-def atualizar_alerta_com_resultado_final(planilha, game_id, jogador_id, valores_jogo_completo):
+def atualizar_alerta_com_resultado_final(cache_alertas, game_id, jogador_id, valores_jogo_completo):
     """Localiza a linha de alerta criada no intervalo (pelo GameID +
     JogadorID — um jogo tem várias linhas, uma por jogador que desviou) e
     preenche as colunas "[Métrica] Jogo" com os valores reais do jogo
@@ -207,19 +246,26 @@ def atualizar_alerta_com_resultado_final(planilha, game_id, jogador_id, valores_
     Devolve True se encontrou e atualizou a linha, False se não existia
     alerta para esse jogador nesse jogo (ele não desviou no intervalo).
     """
-    aba = planilha.worksheet(config.ABA_ALERTAS)
+    aba = cache_alertas["aba"]
     cabecalho = cabecalho_alertas()
-    valores = aba.get_all_values()
     idx_game_id = cabecalho.index("GameID")
     idx_jogador_id = cabecalho.index("JogadorID")
 
-    for indice_linha, linha in enumerate(valores[1:], start=2):  # linha 1 = cabeçalho
+    for indice_linha, linha in enumerate(cache_alertas["linhas"][1:], start=2):
         if linha[idx_game_id] == str(game_id) and linha[idx_jogador_id] == str(jogador_id):
+            atualizacoes = []
             for rotulo, valor in valores_jogo_completo.items():
                 nome_coluna = f"{rotulo} Jogo"
                 if nome_coluna in cabecalho:
                     indice_coluna = cabecalho.index(nome_coluna) + 1
-                    aba.update_cell(indice_linha, indice_coluna, valor)
+                    atualizacoes.append({
+                        "range": rowcol_to_a1(indice_linha, indice_coluna),
+                        "values": [[valor]],
+                    })
+            if atualizacoes:
+                # Uma única chamada à API para todas as células dessa linha,
+                # em vez de uma chamada por métrica.
+                aba.batch_update(atualizacoes)
             return True
 
     return False
@@ -229,21 +275,22 @@ def atualizar_alerta_com_resultado_final(planilha, game_id, jogador_id, valores_
 # Aba "Controle" (técnica — evita reprocessar o mesmo jogo)
 # ---------------------------------------------------------------------------
 
-def jogo_ja_processado(planilha, game_id, etapa):
+def jogo_ja_processado(cache_controle, game_id, etapa):
     """Diz se um jogo já foi processado numa determinada etapa
     ("intervalo" ou "final"), para o main.py não repetir o trabalho (e não
     mandar notificação duplicada) quando o cron roda de novo e encontra o
     mesmo jogo ainda no mesmo status.
     """
-    aba = planilha.worksheet(config.ABA_CONTROLE)
-    registros = aba.get_all_records()
+    cabecalho = cache_controle["linhas"][0]
+    idx_game_id = cabecalho.index("GameID")
+    idx_etapa = cabecalho.index("Etapa")
     return any(
-        str(r.get("GameID")) == str(game_id) and r.get("Etapa") == etapa
-        for r in registros
+        linha[idx_game_id] == str(game_id) and linha[idx_etapa] == etapa
+        for linha in cache_controle["linhas"][1:]
     )
 
 
-def marcar_jogo_processado(planilha, game_id, etapa):
+def marcar_jogo_processado(cache_controle, game_id, etapa):
     """Registra que um jogo foi processado numa etapa, para não repetir."""
-    aba = planilha.worksheet(config.ABA_CONTROLE)
-    aba.append_row([game_id, etapa])
+    cache_controle["aba"].append_row([game_id, etapa])
+    cache_controle["linhas"].append([str(game_id), etapa])
