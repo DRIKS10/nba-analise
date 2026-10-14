@@ -93,12 +93,14 @@ def jogo_terminou(jogo):
 
 def _para_numero(valor):
     """A api-sports devolve minutos e porcentagens como texto (ex: "15",
-    "33.3"). Essa função converte para número, tratando valores vazios/nulos
-    (jogador que não entrou em quadra) como zero.
+    "33.3"). Essa função converte para número, tratando qualquer valor que
+    não seja um número válido (vazio, nulo, ou um placeholder tipo "--" para
+    jogador que não entrou em quadra) como zero.
     """
-    if valor in (None, ""):
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
         return 0.0
-    return float(valor)
 
 
 # ---------------------------------------------------------------------------
