@@ -151,7 +151,12 @@ def _registro_para_estatisticas(registro):
     dados = {}
     for campo in CAMPOS_ESTATISTICAS_1T + CAMPOS_ESTATISTICAS_JOGO:
         valor = registro.get(campo)
-        dados[campo] = float(valor) if valor not in (None, "") else None
+        if valor in (None, ""):
+            dados[campo] = None
+        else:
+            # A planilha pode devolver números com vírgula decimal (ex: "62,5")
+            # se a configuração regional do Google Sheets for em português.
+            dados[campo] = float(str(valor).replace(",", "."))
     return dados
 
 
