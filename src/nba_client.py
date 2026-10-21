@@ -57,11 +57,17 @@ def _data_utc(offset_dias=0):
     hoje = datetime.utcnow().date()
     return (hoje + timedelta(days=offset_dias)).isoformat()
 
-
 def listar_jogos_do_dia():
-    """Devolve os jogos de HOJE e de AMANHÃ em UTC — dois dias, não um só —
-    porque um jogo da costa oeste dos EUA que começa à noite pode cair, em
-    UTC, no dia seguinte ao do resto dos jogos da rodada.
+    """Devolve os jogos de ONTEM, HOJE e AMANHÃ em UTC.
+
+    "Hoje e amanhã" cobre o caso normal: um jogo da costa oeste dos EUA que
+    começa à noite pode cair, em UTC, no dia seguinte ao do resto dos jogos
+    da rodada. "Ontem" cobre um caso que só apareceu na prática, testando
+    com jogos reais: às vezes a api-sports demora HORAS para atualizar o
+    status de um jogo específico para "Finished" (travou "ao vivo" por
+    engano). Se essa correção só chegar depois da virada do dia em UTC, o
+    sistema precisa continuar perguntando por "ontem" por mais um dia, senão
+    nunca descobre que aquele jogo finalmente terminou.
 
     Cada jogo devolvido é o objeto original da api-sports (um dicionário com
     "id", "status" {"long", "short", "halftime"}, "teams" {"home", "visitors"}
@@ -69,11 +75,12 @@ def listar_jogos_do_dia():
     campos diretamente.
     """
     jogos_por_id = {}
-    for offset in (0, 1):
+    for offset in (-1, 0, 1):
         dados = _chamar_api("games", {"date": _data_utc(offset)})
         for jogo in dados["response"]:
             jogos_por_id[jogo["id"]] = jogo
     return list(jogos_por_id.values())
+
 
 
 def jogo_esta_no_intervalo(jogo):
