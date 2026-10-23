@@ -16,9 +16,10 @@ Cada jogo só é processado uma vez em cada etapa (ver aba "Controle" em
 sheets_client.py), para não repetir notificações quando o cron roda de novo
 e encontra o mesmo jogo ainda no intervalo ou ainda "Final".
 
-Cada aba da planilha é lida apenas UMA VEZ por execução (ver nota de revisão
-em sheets_client.py) — por isso as funções de leitura recebem um "cache"
-em vez de ler a planilha direto a cada jogador.
+Cada aba da planilha é lida apenas UMA VEZ por execução, e as escritas em
+Historico/Alertas só são enviadas ao Google no final do processamento de
+cada jogo (ver nota de revisão em sheets_client.py) — por isso aparecem as
+chamadas a sheets_client.salvar_cache_historico()/salvar_cache_alertas().
 """
 
 from datetime import date
@@ -41,6 +42,7 @@ def processar_intervalo(planilha, cache_controle, jogo):
     jogadores_do_jogo = nba_client.obter_boxscore_intervalo(game_id, jogo)
     hoje = date.today().isoformat()
     cache_historico = sheets_client.carregar_cache_historico(planilha)
+    cache_alertas = sheets_client.carregar_cache_alertas(planilha)
 
     times_para_relatorio = {}
 
@@ -57,7 +59,7 @@ def processar_intervalo(planilha, cache_controle, jogo):
                 projecao = projection.calcular_projecao_pontos(jogador, historico)
 
             if any(r["desviou"] for r in resultados.values()):
-                _salvar_linha_alerta(planilha, game_id, hoje, jogador, resultados, projecao)
+                _salvar_linha_alerta(cache_alertas, game_id, hoje, jogador, resultados, projecao)
 
             times_para_relatorio.setdefault(jogador["time"], []).append({
                 "nome": jogador["nome"],
@@ -74,10 +76,15 @@ def processar_intervalo(planilha, cache_controle, jogo):
     if texto_relatorio:
         telegram_client.enviar_mensagem(texto_relatorio)
 
+    # Só agora as mudanças acumuladas vão de fato para o Google Sheets —
+    # no máximo 2 chamadas por aba, não importa quantos jogadores existam.
+    sheets_client.salvar_cache_historico(cache_historico)
+    sheets_client.salvar_cache_alertas(cache_alertas)
+
     sheets_client.marcar_jogo_processado(cache_controle, game_id, "intervalo")
 
 
-def _salvar_linha_alerta(planilha, game_id, data, jogador, resultados, projecao):
+def _salvar_linha_alerta(cache_alertas, game_id, data, jogador, resultados, projecao):
     linha = {
         "GameID": game_id,
         "JogadorID": jogador["id"],
@@ -105,7 +112,7 @@ def _salvar_linha_alerta(planilha, game_id, data, jogador, resultados, projecao)
     if projecao is not None:
         linha["Projecao Pontos"] = round(projecao, 1)
 
-    sheets_client.registrar_alerta(planilha, linha)
+    sheets_client.registrar_alerta(cache_alertas, linha)
 
 
 def processar_final(planilha, cache_controle, jogo):
@@ -133,6 +140,11 @@ def processar_final(planilha, cache_controle, jogo):
         sheets_client.atualizar_alerta_com_resultado_final(
             cache_alertas, game_id, jogador["id"], valores_jogo_completo
         )
+
+    # Só agora as mudanças acumuladas vão de fato para o Google Sheets —
+    # no máximo 2 chamadas por aba, não importa quantos jogadores existam.
+    sheets_client.salvar_cache_historico(cache_historico)
+    sheets_client.salvar_cache_alertas(cache_alertas)
 
     sheets_client.marcar_jogo_processado(cache_controle, game_id, "final")
 
