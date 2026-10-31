@@ -36,6 +36,14 @@ vez pro Google, em no máximo 2 chamadas por aba (uma para linhas novas,
 outra para atualizações), não importa quantos jogadores tenham sido
 processados. Por isso main.py chama essas duas funções ao final de cada
 jogo processado.
+
+NOTA DE REVISÃO sobre expansão automática: o Google Sheets NÃO cria linhas
+sozinho quando um programa escreve além do tamanho atual da planilha (isso
+só acontece quando uma pessoa digita manualmente além do fim, na interface).
+Sem tratar isso, o sistema pararia de funcionar assim que uma aba enchesse —
+e a aba Historico quase chegou nesse ponto de verdade. Por isso
+_garantir_espaco() expande a planilha sozinha, com folga, antes de cada
+escrita que possa precisar de mais linhas do que as que já existem.
 """
 
 import json
@@ -147,6 +155,21 @@ def carregar_cache_controle(planilha):
     return _carregar_cache(planilha, config.ABA_CONTROLE)
 
 
+def _garantir_espaco(aba, linhas_necessarias, folga=1000):
+    """Garante que a aba tenha linhas suficientes ANTES de escrever nela.
+
+    NOTA DE REVISÃO: diferente do que se poderia imaginar, o Google Sheets
+    não cria linhas sozinho quando um programa escreve além do tamanho atual
+    da planilha (isso só acontece quando uma pessoa digita manualmente além
+    do fim, na interface). Sem essa função, o sistema pararia de funcionar
+    assim que a aba enchesse — e isso quase aconteceu de verdade com a aba
+    Historico. `folga` acrescenta linhas extras além do mínimo necessário,
+    para não precisar expandir de novo a cada poucas linhas.
+    """
+    if linhas_necessarias > aba.row_count:
+        aba.add_rows(linhas_necessarias - aba.row_count + folga)
+
+
 def _salvar_cache(cache):
     """Envia as mudanças acumuladas num cache para a planilha de verdade,
     em no máximo 2 chamadas à API: uma pra criar todas as linhas novas de
@@ -154,6 +177,7 @@ def _salvar_cache(cache):
     células de uma vez (batch_update)."""
     aba = cache["aba"]
     if cache["novas_linhas"]:
+        _garantir_espaco(aba, len(cache["linhas"]))
         aba.append_rows(cache["novas_linhas"])
         cache["novas_linhas"] = []
     if cache["atualizacoes"]:
@@ -342,5 +366,6 @@ def jogo_ja_processado(cache_controle, game_id, etapa):
 
 def marcar_jogo_processado(cache_controle, game_id, etapa):
     """Registra que um jogo foi processado numa etapa, para não repetir."""
+    _garantir_espaco(cache_controle["aba"], len(cache_controle["linhas"]) + 1)
     cache_controle["aba"].append_row([game_id, etapa])
     cache_controle["linhas"].append([str(game_id), etapa])
