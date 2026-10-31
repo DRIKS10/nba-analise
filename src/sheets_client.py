@@ -100,7 +100,7 @@ def conectar():
     credenciais_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
     credenciais = Credentials.from_service_account_info(credenciais_info, scopes=ESCOPOS_GOOGLE)
     cliente = gspread.authorize(credenciais)
-    planilha = cliente.open(os.environ["GOOGLE_SHEET_NAME"])
+    planilha = cliente.open(os.environ["GOOGLE_SHEET_NAME"].strip())
 
     _garantir_aba(planilha, config.ABA_HISTORICO, CABECALHO_HISTORICO)
     _garantir_aba(planilha, config.ABA_ALERTAS, cabecalho_alertas())
