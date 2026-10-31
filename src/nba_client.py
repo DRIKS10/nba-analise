@@ -33,7 +33,7 @@ class ErroApiSports(Exception):
 
 
 def _chamar_api(caminho, params=None):
-    headers = {"x-apisports-key": os.environ["APISPORTS_KEY"]}
+    headers = {"x-apisports-key": os.environ["APISPORTS_KEY"].strip()}
     resposta = requests.get(
         f"{config.APISPORTS_BASE_URL}/{caminho}",
         headers=headers,
