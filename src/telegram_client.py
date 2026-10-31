@@ -16,7 +16,10 @@ LIMITE_CARACTERES_TELEGRAM = 4000
 
 
 def _url_envio():
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
+        # .strip() remove espaços/quebras de linha que às vezes entram sem
+    # querer ao colar o valor no GitHub Secrets — um token com uma quebra de
+    # linha no final já causou um erro 404 real neste projeto.
+    token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
     return f"https://api.telegram.org/bot{token}/sendMessage"
 
 
@@ -49,7 +52,8 @@ def enviar_mensagem(texto):
     Se o texto for muito grande, envia em várias mensagens separadas.
     Lança uma exceção se o Telegram recusar o envio (ex: token inválido).
     """
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"].strip()
+
 
     for parte in _dividir_em_partes(texto):
         resposta = requests.post(
