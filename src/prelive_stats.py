@@ -105,12 +105,21 @@ def construir_indice_contexto(cache_historico):
     precisar escanear a planilha inteira de novo para cada jogador avaliado.
 
     Devolve um dicionário {(posicao, chave_da_metrica): {"liga": [...],
-    "por_adversario": {"Nome do Time": [...]}}}, só para as métricas que têm
-    linha de contexto (prelive_config.METRICAS_COM_CONTEXTO).
+    "por_adversario": {"Nome do Time": {"valores": [...], "jogos": {GameID,
+    ...}}}}}, só para as métricas que têm linha de contexto
+    (prelive_config.METRICAS_COM_CONTEXTO).
+
+    NOTA DE REVISÃO: "jogos" guarda o conjunto de GameID distintos, não a
+    quantidade de linhas de jogador/jogo — um jogo em que 2 jogadores da
+    mesma posição enfrentaram aquele adversário (ex: 2 armadores titulares)
+    não pode contar como 2 jogos de amostra, senão o número exibido no
+    relatório (seção 5: "sempre exibir o número de jogos da amostra") infla
+    artificialmente e passa uma falsa sensação de confiabilidade.
     """
     cabecalho = cache_historico["linhas"][0]
     idx_posicao = cabecalho.index("Posicao")
     idx_adversario = cabecalho.index("Adversario")
+    idx_game_id = cabecalho.index("GameID")
     idx_campo_por_metrica = {
         chave: cabecalho.index(f"{chave}_JOGO") for chave in prelive_config.METRICAS_COM_CONTEXTO
     }
@@ -119,6 +128,7 @@ def construir_indice_contexto(cache_historico):
     for linha in cache_historico["linhas"][1:]:
         posicao = linha[idx_posicao]
         adversario = linha[idx_adversario]
+        game_id = linha[idx_game_id]
         for chave, idx_campo in idx_campo_por_metrica.items():
             valor_bruto = linha[idx_campo]
             if valor_bruto in (None, ""):
@@ -126,7 +136,9 @@ def construir_indice_contexto(cache_historico):
             valor = float(str(valor_bruto).replace(",", "."))
             registro = indice.setdefault((posicao, chave), {"liga": [], "por_adversario": {}})
             registro["liga"].append(valor)
-            registro["por_adversario"].setdefault(adversario, []).append(valor)
+            registro_adversario = registro["por_adversario"].setdefault(adversario, {"valores": [], "jogos": set()})
+            registro_adversario["valores"].append(valor)
+            registro_adversario["jogos"].add(game_id)
 
     return indice
 
@@ -134,17 +146,18 @@ def construir_indice_contexto(cache_historico):
 def calcular_contexto_adversario(indice_contexto, posicao, adversario):
     """Devolve, para cada métrica com contexto, a média que jogadores
     daquela posição fizeram contra esse adversário, a média da liga para a
-    mesma posição, e o tamanho da amostra contra esse adversário (seção 5).
+    mesma posição, e o número de jogos distintos do adversário na amostra
+    (seção 5) — não o número de aparições de jogador.
     """
     contexto = {}
     for chave in prelive_config.METRICAS_COM_CONTEXTO:
         registro = indice_contexto.get((posicao, chave), {"liga": [], "por_adversario": {}})
         media_liga, _ = stats.media_e_desvio_padrao(registro["liga"])
-        valores_adversario = registro["por_adversario"].get(adversario, [])
-        media_adversario, _ = stats.media_e_desvio_padrao(valores_adversario)
+        registro_adversario = registro["por_adversario"].get(adversario, {"valores": [], "jogos": set()})
+        media_adversario, _ = stats.media_e_desvio_padrao(registro_adversario["valores"])
         contexto[chave] = {
             "media_adversario": media_adversario,
             "media_liga": media_liga,
-            "jogos_amostra": len(valores_adversario),
+            "jogos_amostra": len(registro_adversario["jogos"]),
         }
     return contexto
