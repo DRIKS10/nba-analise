@@ -72,16 +72,18 @@ def processar_intervalo(planilha, cache_controle, jogo):
 
         sheets_client.registrar_etapa_historico(cache_historico, game_id, hoje, jogador, "1T")
 
+    # Salva na planilha ANTES de tentar notificar pelo Telegram (nota de
+    # revisão: um erro real já aconteceu aqui — o envio do Telegram falhou,
+    # e como a gravação vinha depois no código, o jogo inteiro foi perdido
+    # daquela vez, mesmo já tendo os dados prontos em mãos). Assim, mesmo se
+    # o Telegram falhar, os dados já estão seguros.
+    sheets_client.salvar_cache_historico(cache_historico)
+    sheets_client.salvar_cache_alertas(cache_alertas)
+    sheets_client.marcar_jogo_processado(cache_controle, game_id, "intervalo")
+
     texto_relatorio = report.montar_relatorio(times_para_relatorio)
     if texto_relatorio:
         telegram_client.enviar_mensagem(texto_relatorio)
-
-    # Só agora as mudanças acumuladas vão de fato para o Google Sheets —
-    # no máximo 2 chamadas por aba, não importa quantos jogadores existam.
-    sheets_client.salvar_cache_historico(cache_historico)
-    sheets_client.salvar_cache_alertas(cache_alertas)
-
-    sheets_client.marcar_jogo_processado(cache_controle, game_id, "intervalo")
 
 
 def _salvar_linha_alerta(cache_alertas, game_id, data, jogador, resultados, projecao):
@@ -154,11 +156,26 @@ def main():
     jogos_de_hoje = nba_client.listar_jogos_do_dia()
     cache_controle = sheets_client.carregar_cache_controle(planilha)
 
+    erros = []
     for jogo in jogos_de_hoje:
-        if nba_client.jogo_esta_no_intervalo(jogo):
-            processar_intervalo(planilha, cache_controle, jogo)
-        elif nba_client.jogo_terminou(jogo):
-            processar_final(planilha, cache_controle, jogo)
+        try:
+            if nba_client.jogo_esta_no_intervalo(jogo):
+                processar_intervalo(planilha, cache_controle, jogo)
+            elif nba_client.jogo_terminou(jogo):
+                processar_final(planilha, cache_controle, jogo)
+        except Exception as erro:
+            # Um erro em UM jogo não pode impedir os outros jogos da mesma
+            # execução de serem processados (nota de revisão: antes, um erro
+            # no meio da lista fazia o sistema desistir de todo o resto).
+            # O erro ainda é reportado no final, pra você saber que algo deu
+            # errado em algum jogo específico.
+            erros.append(f"Jogo {jogo.get('id')}: {erro}")
+
+    if erros:
+        raise RuntimeError(
+            f"{len(erros)} jogo(s) falharam nesta execução (os demais foram "
+            "processados normalmente):\n" + "\n".join(erros)
+        )
 
 
 if __name__ == "__main__":
