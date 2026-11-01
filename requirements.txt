@@ -7,3 +7,8 @@ google-auth
 
 # Carrega variáveis de ambiente de um arquivo .env quando rodamos localmente
 python-dotenv
+
+# Base de fusos horários, usada pelo modo pre-live para saber a hora certa em
+# Brasília (America/Sao_Paulo). O Windows não vem com essa base embutida como
+# o Linux costuma ter — sem este pacote, o cálculo do fuso quebra.
+tzdata

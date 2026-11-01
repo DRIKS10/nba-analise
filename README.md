@@ -128,6 +128,27 @@ horário definida em `.github/workflows/monitor.yml`.
 
 ---
 
+## Modo pre-live (complementar)
+
+Além do monitoramento de intervalo acima, existe um segundo modo —
+**pre-live** — que roda 1x por dia, de manhã, e avisa sobre jogadores que
+vêm melhorando em relação ao próprio histórico, antes dos jogos começarem.
+Ele é independente do modo de intervalo (não interfere em nada do que já
+funciona) e usa os **mesmos Secrets** já configurados acima — não precisa de
+nenhuma conta ou credencial nova.
+
+Ver `spec-prelive-nba.md` para os detalhes completos.
+
+- **Teste manual pelo GitHub**: aba **Actions**, workflow "Pre-live NBA",
+  **Run workflow**. Se não houver jogo "Scheduled" no dia, ele simplesmente
+  não manda nada.
+- **Teste local**: `python -m src.prelive_main` (mesmo `.env` do modo
+  acima).
+- Cria sozinho as abas próprias `ControlePreLive` e `AlertasPreLive` na
+  primeira vez que rodar.
+
+---
+
 ## Limitações conhecidas desta primeira versão
 
 - **A api-sports.io é uma API de terceiros**: ela pode mudar o formato das
