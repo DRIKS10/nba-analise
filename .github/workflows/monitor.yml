@@ -12,6 +12,20 @@ on:
     - cron: "*/5 0-7 * * *"    # 21h00 às 04h55 (Brasília, já no dia seguinte em UTC)
   workflow_dispatch: {}         # permite rodar manualmente pela aba "Actions" do GitHub, para testar
 
+# Nota de revisão (bug real corrigido): impede que duas execuções rodem ao
+# mesmo tempo. Como há dois gatilhos ativos (cron-job.org + o agendamento
+# nativo do GitHub como reforço), duas execuções concorrentes já causaram
+# perda real de dados — a função que expande a planilha (add_rows) lê o
+# tamanho atual e manda "definir" um novo tamanho; se duas execuções fazem
+# isso ao mesmo tempo, a que termina por último pode encolher a planilha de
+# volta, apagando linhas que a outra tinha acabado de escrever, sem erro
+# nenhum. Com "concurrency", uma nova execução que começar enquanto outra
+# ainda está rodando fica na fila (não roda em paralelo, e a que já estava
+# rodando não é cancelada).
+concurrency:
+  group: monitor-nba
+  cancel-in-progress: false
+
 jobs:
   monitorar:
     runs-on: ubuntu-latest
