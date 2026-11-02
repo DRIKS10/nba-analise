@@ -57,6 +57,7 @@ def _data_utc(offset_dias=0):
     hoje = datetime.utcnow().date()
     return (hoje + timedelta(days=offset_dias)).isoformat()
 
+
 def listar_jogos_do_dia():
     """Devolve os jogos de ONTEM, HOJE e AMANHÃ em UTC.
 
@@ -82,7 +83,6 @@ def listar_jogos_do_dia():
     return list(jogos_por_id.values())
 
 
-
 def jogo_esta_no_intervalo(jogo):
     """True se o jogo está exatamente no intervalo (fim do 2º período)."""
     return bool(jogo["status"]["halftime"])
@@ -92,6 +92,23 @@ def jogo_terminou(jogo):
     """True se o jogo já terminou. status.short == 3 é o código de 'Finished'
     (confirmado testando um jogo real até o fim)."""
     return jogo["status"]["short"] == 3
+
+
+def data_do_jogo(jogo):
+    """Devolve a data do jogo (ex: "2026-10-31"), a partir do campo
+    "date.start" que a api-sports devolve (confirmado num jogo real).
+
+    NOTA DE REVISÃO (bug real corrigido): antes, main.py usava a data de
+    QUANDO O CÓDIGO RODAVA (date.today(), em UTC) como a "Data" da linha no
+    histórico. Isso dá errado quando a captura do intervalo é perdida (por
+    uma falha de rede, por exemplo) e a linha só é criada no final do jogo —
+    se isso acontecer perto da virada do dia em UTC, a linha fica com a data
+    errada (um dia a mais) e, por consequência, sem o 1º tempo (que só é
+    gravado durante o intervalo de verdade). Usar a data do jogo em vez da
+    data de execução resolve os dois sintomas de uma vez: a data fica sempre
+    certa, não importa quando o código conseguiu processar o jogo.
+    """
+    return jogo["date"]["start"][:10]
 
 
 # ---------------------------------------------------------------------------

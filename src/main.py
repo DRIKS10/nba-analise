@@ -22,8 +22,6 @@ cada jogo (ver nota de revisão em sheets_client.py) — por isso aparecem as
 chamadas a sheets_client.salvar_cache_historico()/salvar_cache_alertas().
 """
 
-from datetime import date
-
 from dotenv import load_dotenv
 
 from src import config, nba_client, projection, report, sheets_client, stats, telegram_client
@@ -40,7 +38,9 @@ def processar_intervalo(planilha, cache_controle, jogo):
         return
 
     jogadores_do_jogo = nba_client.obter_boxscore_intervalo(game_id, jogo)
-    hoje = date.today().isoformat()
+    # Data do JOGO (não a data de quando o código rodou — ver nota de revisão
+    # em nba_client.data_do_jogo, bug real já corrigido).
+    hoje = nba_client.data_do_jogo(jogo)
     cache_historico = sheets_client.carregar_cache_historico(planilha)
     cache_alertas = sheets_client.carregar_cache_alertas(planilha)
 
@@ -122,7 +122,7 @@ def processar_final(planilha, cache_controle, jogo):
     if sheets_client.jogo_ja_processado(cache_controle, game_id, "final"):
         return
 
-    hoje = date.today().isoformat()
+    hoje = nba_client.data_do_jogo(jogo)
     jogadores = nba_client.obter_boxscore_final(game_id, jogo)
     cache_historico = sheets_client.carregar_cache_historico(planilha)
     cache_alertas = sheets_client.carregar_cache_alertas(planilha)
