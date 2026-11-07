@@ -12,19 +12,30 @@ on:
     - cron: "*/5 0-7 * * *"    # 21h00 às 04h55 (Brasília, já no dia seguinte em UTC)
   workflow_dispatch: {}         # permite rodar manualmente pela aba "Actions" do GitHub, para testar
 
-# Nota de revisão (bug real corrigido): impede que duas execuções rodem ao
-# mesmo tempo. Como há dois gatilhos ativos (cron-job.org + o agendamento
-# nativo do GitHub como reforço), duas execuções concorrentes já causaram
-# perda real de dados — a função que expande a planilha (add_rows) lê o
-# tamanho atual e manda "definir" um novo tamanho; se duas execuções fazem
-# isso ao mesmo tempo, a que termina por último pode encolher a planilha de
-# volta, apagando linhas que a outra tinha acabado de escrever, sem erro
-# nenhum. Com "concurrency", uma nova execução que começar enquanto outra
-# ainda está rodando fica na fila (não roda em paralelo, e a que já estava
-# rodando não é cancelada).
+# Nota de revisão (bug real corrigido, em duas partes): impede que duas
+# execuções rodem ao mesmo tempo. Como há dois gatilhos ativos (cron-job.org
+# + o agendamento nativo do GitHub como reforço, cada um a cada 5 minutos),
+# duas execuções concorrentes já causaram perda real de dados — a função que
+# expande a planilha (add_rows) lê o tamanho atual e manda "definir" um novo
+# tamanho; se duas execuções fazem isso ao mesmo tempo, a que termina por
+# último pode encolher a planilha de volta, apagando linhas que a outra
+# tinha acabado de escrever, sem erro nenhum.
+#
+# A primeira versão desta correção (só "concurrency", sem "queue: max") foi
+# incompleta e criou um problema NOVO: por padrão, o GitHub só permite UMA
+# execução esperando na fila por vez — se uma nova tentativa chegasse
+# enquanto já tinha outra esperando, a mais antiga era CANCELADA (nunca
+# chegava a rodar), mesmo com cancel-in-progress em false (que só protege a
+# execução que já está RODANDO, não as que estão na fila). Como os dois
+# gatilhos disparam a cada 5 minutos, isso cancelava execuções com
+# frequência, piorando bastante o problema de 1º tempo perdido e de jogos
+# só gravados horas/dias depois. "queue: max" permite várias execuções
+# esperarem na fila (em vez de se cancelarem), mantendo a garantia de nunca
+# rodar duas ao mesmo tempo.
 concurrency:
   group: monitor-nba
   cancel-in-progress: false
+  queue: max
 
 jobs:
   monitorar:
