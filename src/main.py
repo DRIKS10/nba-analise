@@ -38,6 +38,15 @@ def processar_intervalo(planilha, cache_controle, jogo):
         return
 
     jogadores_do_jogo = nba_client.obter_boxscore_intervalo(game_id, jogo)
+    if not jogadores_do_jogo:
+        # A api-sports às vezes demora alguns segundos para disponibilizar o
+        # boxscore depois do status mudar para "intervalo" (bug real
+        # corrigido: o sistema marcava o jogo como processado mesmo assim,
+        # perdendo o 1º tempo pra sempre). Sem marcar como processado, o
+        # cron tenta de novo na próxima execução, ainda dentro da mesma
+        # janela do intervalo.
+        return
+
     # Data do JOGO (não a data de quando o código rodou — ver nota de revisão
     # em nba_client.data_do_jogo, bug real já corrigido).
     hoje = nba_client.data_do_jogo(jogo)
@@ -122,8 +131,13 @@ def processar_final(planilha, cache_controle, jogo):
     if sheets_client.jogo_ja_processado(cache_controle, game_id, "final"):
         return
 
-    hoje = nba_client.data_do_jogo(jogo)
     jogadores = nba_client.obter_boxscore_final(game_id, jogo)
+    if not jogadores:
+        # Mesmo cuidado de processar_intervalo: se vier vazio, não marca como
+        # processado, para tentar de novo na próxima execução.
+        return
+
+    hoje = nba_client.data_do_jogo(jogo)
     cache_historico = sheets_client.carregar_cache_historico(planilha)
     cache_alertas = sheets_client.carregar_cache_alertas(planilha)
 
